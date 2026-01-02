@@ -72,7 +72,7 @@ The app will be available at `http://127.0.0.1:5000`
 ## 📁 Project Structure
 
 ```
-NaoMedical/
+Healthcare_Translation_WebApp/
 ├── api/
 │   └── index.py          # Main Flask application
 ├── templates/
@@ -80,8 +80,6 @@ NaoMedical/
 ├── run_local.py          # Local development server
 ├── vercel.json           # Vercel deployment config
 ├── requirements.txt      # Python dependencies
-├── .vercelignore         # Vercel ignore file
-├── .gitignore           # Git ignore file
 └── README.md            # This file
 ```
 
