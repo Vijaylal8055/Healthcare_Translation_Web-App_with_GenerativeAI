@@ -1,117 +1,61 @@
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from flask_talisman import Talisman
-import openai
+from deep_translator import GoogleTranslator
 import os
-from dotenv import load_dotenv
 import hashlib
-import secrets
 
-load_dotenv()
+app = Flask(__name__, template_folder='../templates')
 
-app = Flask(__name__, template_folder="../templates")
+CORS(app, resources={r"/*": {"origins": ["*"], "methods": ["GET", "POST"]}})
 
-# -------------------- SECURITY --------------------
+request_counts = {}
 
-CORS(app, resources={
-    r"/*": {
-        "origins": ["https://*.vercel.app"],
-        "methods": ["GET", "POST"],
-        "allow_headers": ["Content-Type"]
-    }
-})
+def check_rate_limit(ip):
+    import time
+    current_time = time.time()
+    if ip not in request_counts:
+        request_counts[ip] = []
+    request_counts[ip] = [t for t in request_counts[ip] if current_time - t < 60]
+    if len(request_counts[ip]) >= 30:
+        return False
+    request_counts[ip].append(current_time)
+    return True
 
-if os.getenv("VERCEL_ENV") == "production":
-    Talisman(
-        app,
-        force_https=True,
-        strict_transport_security=True,
-        content_security_policy={
-            "default-src": "'self'",
-            "script-src": ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
-            "style-src": ["'self'", "'unsafe-inline'"],
-            "img-src": "'self' data:",
-        },
-    )
-
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"
-)
-limiter.init_app(app)
-
-app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# -------------------- ROUTES --------------------
-
-@app.route("/")
+@app.route('/')
 def index():
-    return render_template("index.html")
+    return render_template('index.html')
 
-@app.route("/translate", methods=["POST"])
-@limiter.limit("30 per minute")
+@app.route('/translate', methods=['POST'])
 def translate():
     try:
+        client_ip = request.remote_addr
+        if not check_rate_limit(client_ip):
+            return jsonify({'error': 'Rate limit exceeded'}), 429
+        
         data = request.json
-        text = data.get("text", "")
-
+        text = data.get('text', '')
+        source_lang = data.get('source_lang', 'en')
+        target_lang = data.get('target_lang', 'es')
+        
         if not text:
-            return jsonify({"error": "No text provided"}), 400
-
+            return jsonify({'error': 'No text provided'}), 400
         if len(text) > 5000:
-            return jsonify({"error": "Text too long"}), 400
-
-        text = text.replace("<", "&lt;").replace(">", "&gt;")
-
-        lang_names = {
-            "en": "English", "es": "Spanish", "zh": "Chinese",
-            "fr": "French", "ar": "Arabic", "hi": "Hindi",
-            "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
-            "de": "German"
-        }
-
-        source = lang_names.get(data.get("source_lang", "en"), "English")
-        target = lang_names.get(data.get("target_lang", "es"), "Spanish")
-
-        req_hash = hashlib.sha256(text.encode()).hexdigest()[:10]
-        print(f"Translate {source} → {target} | {req_hash}")
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a professional medical translator. "
-                        "Preserve medical terminology and privacy."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Translate from {source} to {target}:\n\n{text}",
-                },
-            ],
-            temperature=0.3,
-            max_tokens=500,
-        )
-
+            return jsonify({'error': 'Text too long'}), 400
+        
+        text = text.replace('<', '&lt;').replace('>', '&gt;')
+        
+        translator = GoogleTranslator(source=source_lang, target=target_lang)
+        translation = translator.translate(text)
+        
         return jsonify({
-            "success": True,
-            "translation": response.choices[0].message["content"].strip()
+            'success': True,
+            'translation': translation,
+            'original': text
         })
-
     except Exception as e:
-        print("ERROR:", str(e))
-        return jsonify({"error": "Translation service unavailable"}), 500
+        print(f"Error: {e}")
+        return jsonify({'error': 'Translation failed'}), 500
 
-@app.route("/health")
+@app.route('/health')
 def health():
-    return jsonify({"status": "healthy"}), 200
-
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    return jsonify({"error": "Rate limit exceeded"}), 429
+    return jsonify({'status': 'healthy'}), 200
